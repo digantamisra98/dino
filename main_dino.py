@@ -34,6 +34,7 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
+import wandb
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -217,6 +218,8 @@ def train_dino(args):
     utils.load_pretrained_weights(student, args.pretrained_weights, 'student', args.arch, args.patch_size)
     utils.load_pretrained_weights(teacher, args.pretrained_weights, 'teacher', args.arch, args.patch_size)
 
+    wb_logger = wandb.init(project="mae_mtl", entity='landskape', save_code='True', config=args)
+
     # ============ preparing loss ... ============
     dino_loss = DINOLoss(
         args.out_dim,
@@ -297,6 +300,7 @@ def train_dino(args):
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch}
         if utils.is_main_process():
+            wb_logger.log(log_stats)
             with (Path(args.output_dir) / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
     total_time = time.time() - start_time
