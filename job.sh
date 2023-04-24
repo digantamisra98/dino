@@ -3,7 +3,7 @@
 #SBATCH --nodes=2
 #SBATCH --gpus-per-node=a100l.3:8
 #SBATCH --mem=40GB
-#SBATCH --time=50:00:00
+#SBATCH --time=80:00:00
 #SBATCH --output=/home/mila/d/diganta.misra/scratch/mae_data/weights/log/out.txt
 #SBATCH --error=/home/mila/d/diganta.misra/scratch/mae_data/weights/log/err.txt
 
