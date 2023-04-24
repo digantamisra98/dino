@@ -19,6 +19,7 @@ import time
 import math
 import json
 from pathlib import Path
+import utils
 
 import numpy as np
 from PIL import Image
@@ -126,6 +127,9 @@ def get_args_parser():
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+
+    # Loading from checkpoints
+    parser.add_argument('--pretrained_weights', default='', type=str, help="Path to pretrained weights to evaluate.")
     return parser
 
 
@@ -210,6 +214,8 @@ def train_dino(args):
     for p in teacher.parameters():
         p.requires_grad = False
     print(f"Student and Teacher are built: they are both {args.arch} network.")
+    utils.load_pretrained_weights(student, args.pretrained_weights, 'student', args.arch, args.patch_size)
+    utils.load_pretrained_weights(teacher, args.pretrained_weights, 'teacher', args.arch, args.patch_size)
 
     # ============ preparing loss ... ============
     dino_loss = DINOLoss(
