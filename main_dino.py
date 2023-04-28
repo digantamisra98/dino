@@ -34,7 +34,7 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
-import wandb
+# import wandb
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -45,8 +45,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument('--arch', default='vit_small', type=str,
-        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small'] \
-                + torchvision_archs + torch.hub.list("facebookresearch/xcit:main"),
+        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small'],
         help="""Name of architecture to train. For quick experiments with ViTs,
         we recommend using vit_tiny or vit_small.""")
     parser.add_argument('--patch_size', default=16, type=int, help="""Size in pixels
@@ -131,6 +130,8 @@ def get_args_parser():
 
     # Loading from checkpoints
     parser.add_argument('--pretrained_weights', default='', type=str, help="Path to pretrained weights to evaluate.")
+    # Gradient accumulation
+    parser.add_argument('--accum_iter', default=1, type=int, help='Gradient accumulation factor. Applies optimizer.step after every `accum_it` steps.')
     return parser
 
 
@@ -218,7 +219,7 @@ def train_dino(args):
     utils.load_pretrained_weights(student, args.pretrained_weights, 'student', args.arch, args.patch_size)
     utils.load_pretrained_weights(teacher, args.pretrained_weights, 'teacher', args.arch, args.patch_size)
 
-    wb_logger = wandb.init(project="mae_mtl", entity='landskape', save_code='True', config=args)
+    # wb_logger = wandb.init(project="mae_mtl", entity='landskape', save_code='True', config=args)
 
     # ============ preparing loss ... ============
     dino_loss = DINOLoss(
@@ -275,7 +276,7 @@ def train_dino(args):
 
     start_time = time.time()
     print("Starting DINO training !")
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(start_epoch, 16):
         data_loader.sampler.set_epoch(epoch)
 
         # ============ training one epoch of DINO ... ============
@@ -300,7 +301,7 @@ def train_dino(args):
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch}
         if utils.is_main_process():
-            wb_logger.log(log_stats)
+            # wb_logger.log(log_stats)
             with (Path(args.output_dir) / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
     total_time = time.time() - start_time
@@ -334,24 +335,27 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             sys.exit(1)
 
         # student update
-        optimizer.zero_grad()
+        # optimizer.zero_grad()
         param_norms = None
+        loss = loss / args.accum_iter
         if fp16_scaler is None:
             loss.backward()
-            if args.clip_grad:
-                param_norms = utils.clip_gradients(student, args.clip_grad)
-            utils.cancel_gradients_last_layer(epoch, student,
-                                              args.freeze_last_layer)
-            optimizer.step()
+            if ((it + 1) % args.accum_iter == 0) or ((it + 1) == len(data_loader)):
+                if args.clip_grad:
+                    param_norms = utils.clip_gradients(student, args.clip_grad)
+                utils.cancel_gradients_last_layer(epoch, student,
+                                                args.freeze_last_layer)
         else:
             fp16_scaler.scale(loss).backward()
-            if args.clip_grad:
-                fp16_scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
-                param_norms = utils.clip_gradients(student, args.clip_grad)
-            utils.cancel_gradients_last_layer(epoch, student,
-                                              args.freeze_last_layer)
-            fp16_scaler.step(optimizer)
-            fp16_scaler.update()
+            # gradient accumulation
+            if ((it + 1) % args.accum_iter == 0) or ((it + 1) == len(data_loader)):
+                if args.clip_grad:
+                    fp16_scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                    param_norms = utils.clip_gradients(student, args.clip_grad)
+                utils.cancel_gradients_last_layer(epoch, student,
+                                                args.freeze_last_layer)
+                fp16_scaler.step(optimizer)
+                fp16_scaler.update()
 
         # EMA update for the teacher
         with torch.no_grad():
@@ -361,7 +365,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
 
         # logging
         torch.cuda.synchronize()
-        metric_logger.update(loss=loss.item())
+        metric_logger.update(loss=loss.item() * args.accum_iter)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
     # gather the stats from all processes
