@@ -139,12 +139,11 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key, model_nam
         else:
             backbone = model.backbone
         new_size = int(math.sqrt(backbone.patch_embed.num_patches))
-        del backbone
         
-        new_posemb = resample_abs_pos_embed(posemb, new_size)
+        new_posemb = resample_abs_pos_embed(posemb, new_size, verbose=True)
         state_dict['pos_embed'] = new_posemb
         
-        msg = model.load_state_dict(state_dict, strict=False)
+        msg = backbone.load_state_dict(state_dict, strict=False)
         print('Pretrained weights found at {} and loaded with msg: {}'.format(pretrained_weights, msg))
     else:
         print("Please use the `--pretrained_weights` argument to indicate the path of the checkpoint to evaluate.")
