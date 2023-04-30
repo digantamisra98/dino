@@ -29,8 +29,21 @@ from collections import defaultdict, deque
 import numpy as np
 import torch
 from torch import nn
+import torch.nn.functional as F
 import torch.distributed as dist
 from PIL import ImageFilter, ImageOps
+
+from itertools import repeat
+import collections.abc
+
+
+# From PyTorch internals
+def _ntuple(n):
+    def parse(x):
+        if isinstance(x, collections.abc.Iterable) and not isinstance(x, str):
+            return tuple(x)
+        return tuple(repeat(x, n))
+    return parse
 
 
 class GaussianBlur(object):
@@ -68,6 +81,44 @@ class Solarization(object):
             return img
 
 
+# Modified from https://github.com/huggingface/pytorch-image-models/blob/5e64777804154b510ab41f0ace5ae30551bc991b/timm/layers/pos_embed.py
+def resample_abs_pos_embed(
+    posemb, 
+    new_size, 
+    num_prefix_tokens=1, 
+    interpolation='bicubic', 
+    antialias=True, 
+    verbose=False
+):
+    # sort out sizes, assume square if old size not provided
+    new_size = _ntuple(2)(new_size)
+    new_ntok = new_size[0] * new_size[1]
+    
+    old_size = int(math.sqrt(posemb.shape[1] - num_prefix_tokens))
+    old_size = _ntuple(2)(old_size)
+    if new_size == old_size:  # might not both be same container type
+        return posemb
+    
+    if num_prefix_tokens:
+        posemb_prefix, posemb = posemb[:, :num_prefix_tokens], posemb[:, num_prefix_tokens:]
+    else:
+        posemb_prefix, posemb = None, posemb
+        
+    # do the interpolation
+    posemb = posemb.reshape(1, old_size[0], old_size[1], -1).permute(0, 3, 1, 2)
+    posemb = F.interpolate(posemb, size=new_size, mode=interpolation, antialias=antialias)
+    posemb = posemb.permute(0, 2, 3, 1).reshape(1, new_ntok, -1)
+    
+    if verbose:
+        print(f'Resized position embedding: {old_size} to {new_size}.')
+    
+    # add back extra (class, etc) prefix tokens
+    if posemb_prefix is not None:
+        print(posemb_prefix.shape, posemb.shape)
+        posemb = torch.cat([posemb_prefix, posemb], dim=1)
+    return posemb
+
+
 def load_pretrained_weights(model, pretrained_weights, checkpoint_key, model_name, patch_size):
     if os.path.isfile(pretrained_weights):
         state_dict = torch.load(pretrained_weights, map_location="cpu")
@@ -78,6 +129,21 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key, model_nam
         state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
         # remove `backbone.` prefix induced by multicrop wrapper
         state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+
+        # resize positional encodings
+        posemb = state_dict['pos_embed']
+
+        if hasattr(model, 'module'):
+            module = model.module
+            backbone = module.backbone
+        else:
+            backbone = model.backbone
+        new_size = int(math.sqrt(backbone.patch_embed.num_patches))
+        del backbone
+        
+        new_posemb = resample_abs_pos_embed(posemb, new_size)
+        state_dict['pos_embed'] = new_posemb
+        
         msg = model.load_state_dict(state_dict, strict=False)
         print('Pretrained weights found at {} and loaded with msg: {}'.format(pretrained_weights, msg))
     else:
