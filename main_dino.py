@@ -197,8 +197,6 @@ def train_dino(args):
         teacher,
         DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
     )
-    utils.load_pretrained_weights(student, args.pretrained_weights, 'student', args.arch, args.patch_size)
-    utils.load_pretrained_weights(teacher, args.pretrained_weights, 'teacher', args.arch, args.patch_size)
     # move networks to gpu
     student, teacher = student.cuda(), teacher.cuda()
     # synchronize batch norms (if any)
@@ -219,6 +217,8 @@ def train_dino(args):
     for p in teacher.parameters():
         p.requires_grad = False
     print(f"Student and Teacher are built: they are both {args.arch} network.")
+    utils.load_pretrained_weights(teacher, args.pretrained_weights, 'teacher', args.arch, args.patch_size)
+    utils.load_pretrained_weights(student, args.pretrained_weights, 'student', args.arch, args.patch_size)
 
     # wb_logger = wandb.init(project="mae_mtl", entity='landskape', save_code='True', config=args)
 
