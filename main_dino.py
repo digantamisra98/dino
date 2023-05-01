@@ -277,7 +277,7 @@ def train_dino(args):
 
     start_time = time.time()
     print("Starting DINO training !")
-    for epoch in range(start_epoch, 16):
+    for epoch in range(start_epoch, args.epoch):
         data_loader.sampler.set_epoch(epoch)
 
         # ============ training one epoch of DINO ... ============
